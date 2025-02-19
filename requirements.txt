@@ -1,0 +1,5 @@
+numpy==1.26.4
+pillow==10.2.0
+rasterio==1.4.3
+rioxarray==0.18.2
+uavgeo==0.2.2
