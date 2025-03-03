@@ -24,7 +24,7 @@ pip install rasterio shapely geopandas numpy matplotlib opencv-python glob2
 
 # Usage
 
-## 1. Prepare Input Data
+## 1. Prepare the input data
 
 Place the Sentinel-2 and drone raster files in the working directory:
 
@@ -32,7 +32,7 @@ Sentinel-2 raster: 2024-07-31_Sentinel-2_L2A_(Raw)_stack.tif
 
 Drone raster: rescaled_drone.tif
 
-## 2. Run the Script
+## 2. Run the script
 
 Execute the script by running:
 
@@ -62,25 +62,25 @@ sentinel_reconstructed.png
 
 drone_reconstructed.png
 
-# Processing Steps
+# Processing steps:
 
 ## Step 1: Resample Sentinel-2 to 10m
 
 The Sentinel-2 raster is resampled to a 10m resolution using bilinear interpolation.
 
-## Step 2: Reproject Drone Image
+## Step 2: Reproject drone image
 
 The drone image is reprojected to match the Sentinel-2 CRS.
 
-## Step 3: Clip Images to the Same Spatial Extent
+## Step 3: Clip images to the same spatial extent
 
 Both Sentinel-2 and drone rasters are clipped using the bounding box of the drone raster.
 
-## Step 4: Generate Tiles
+## Step 4: Generate tiles
 
-Each clipped raster is divided into 400m x 400m tiles to ensure alignment.
+Each clipped raster is divided into fixed size tiles to ensure alignment.
 
-## Step 5: Generate Comparisons
+## Step 5: Generate comparisons
 
 For each corresponding tile:
 
@@ -88,7 +88,7 @@ The Sentinel-2 image is resized to match the drone tile.
 
 A side-by-side visualization is saved in output_plots/.
 
-## Step 6: Reconstruct Full Images
+## Step 6: Reconstruct full images
 
 Tiles are stitched back together to verify correctness.
 
