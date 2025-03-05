@@ -11,7 +11,39 @@ import os
 import glob
 import cv2
 
-sentinel_bands=[1, 3, 2]
+sentinel_bands=[4, 3, 2] #R,G,B
+
+def rescale_image(input_path, output_path, target_resolution=1):
+    """Rescales the image to the target resolution."""
+    with rasterio.open(input_path) as src:
+        target_crs = src.crs
+        print(target_crs)
+        transform, width, height = calculate_default_transform(
+            src.crs, target_crs, src.width, src.height, *src.bounds, resolution=target_resolution
+        )
+
+        profile = src.profile.copy()
+        profile.update({
+            "crs": target_crs,
+            "transform": transform,
+            "width": width,
+            "height": height
+        })
+
+        with rasterio.open(output_path, "w", **profile) as dst:
+            for i in range(1, src.count + 1): 
+                reproject(
+                    source=rasterio.band(src, i),
+                    destination=rasterio.band(dst, i),
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=transform,
+                    dst_crs=target_crs,
+                    resampling=Resampling.bilinear  
+                )
+        
+        print(f"Rescaled {input_path} to {target_resolution}m/pixel saved to {output_path}")
+
 
 def reproject_raster(input_raster, reference_raster, output_raster):
     """
@@ -47,38 +79,7 @@ def reproject_raster(input_raster, reference_raster, output_raster):
 
     print(f"Reprojected raster saved to {output_raster}")
 
-def resample_sentinel_to_10m(input_raster, output_raster):
-    """
-    Resamples Sentinel-2 image to 10m resolution.
-    """
-    with rasterio.open(input_raster) as src:
-        target_crs = "EPSG:32633" 
 
-        transform, width, height = calculate_default_transform(
-            src.crs, target_crs, src.width, src.height, *src.bounds, resolution=10
-        )
-
-        profile = src.profile.copy()
-        profile.update({
-            "crs": target_crs,
-            "transform": transform,
-            "width": width,
-            "height": height
-        })
-
-        with rasterio.open(output_raster, "w", **profile) as dst:
-            for i in range(1, src.count + 1): 
-                reproject(
-                    source=rasterio.band(src, i),
-                    destination=rasterio.band(dst, i),
-                    src_transform=src.transform,
-                    src_crs=src.crs,
-                    dst_transform=transform,
-                    dst_crs=target_crs,
-                    resampling=Resampling.bilinear  
-                )
-
-    print(f"Resampled Sentinel image saved to {output_raster}")
 
 
 def clip_raster_and_save(raster_path, output_tif_path, reference_raster):
@@ -221,7 +222,7 @@ def plot_all_tiles(drone_folder, sentinel_folder, output_folder):
         plt.tight_layout()
 
         output_png_path = os.path.join(output_folder, f"{tile_name}.png")
-        plt.savefig(output_png_path, dpi=300)
+        plt.savefig(output_png_path, dpi=600)
         plt.close()
         
         print(f" Saved comparison: {output_png_path}")
@@ -342,43 +343,54 @@ def print_raster_info(raster_name):
     with rasterio.open(raster_name) as src:
         print(f"CRS: {src.crs}")
         print(f"Pixel Size: {src.res}")  
-        print(f"Image Size: {src.width} x {src.height}")
 
 
 def main():
     # Paths to input raster files
-    sentinel_raster = "2024-07-31_Sentinel-2_L2A_(Raw)_stack.tif"
-    drone_raster = "rescaled_drone.tif"
+    sentinel_raster = "2024-07-31_Sentinel-2_L2A.tif"
+    print_raster_info(sentinel_raster)
+    drone_raster = "../magicbathy/MagicBathyNet/20240731_Volarje_RX1_orthomosaic_2cmGSD.tif"
+    print_raster_info(drone_raster)
+    
+    # Resample drone image to 1m/pixel resolution
+    drone_resampled = "resampled_drone_1m.tif"
+    target_resolution_drone = 1
+    rescale_image(drone_raster, output_path=drone_resampled, target_resolution=target_resolution_drone) 
+    print_raster_info(drone_resampled)
 
-    sentinel_resampled = "rescaled_sentinel_10m.tif"
-    resample_sentinel_to_10m(sentinel_raster, sentinel_resampled)
+    # Resample S2 image to 10m/pixel resolution
+    sentinel_resampled = "resampled_sentinel_10m.tif"
+    target_resolution_s2 = 10
+    rescale_image(sentinel_raster, sentinel_resampled, target_resolution=target_resolution_s2)
     print_raster_info(sentinel_resampled)
 
+    # Reproject the drone raster to match the CRS of the S2 reference raster.
     drone_reprojected = "reprojected_drone.tif"
-    reproject_raster(drone_raster, sentinel_resampled, drone_reprojected)
+    reproject_raster(drone_resampled, sentinel_resampled, drone_reprojected)
     print_raster_info(drone_reprojected)
     
+    # Ensure both images cover the same area by clipping the bounding box of a reference raster (drone image).
     sentinel_clipped = "soca_sentinel_clipped.tif"
     drone_clipped = "soca_drone_clipped.tif"
-
     clip_raster_and_save(sentinel_resampled, sentinel_clipped, drone_reprojected)
     clip_raster_and_save(drone_reprojected, drone_clipped, drone_reprojected)
-
     print_raster_info(sentinel_clipped)
     print_raster_info(drone_clipped)
 
+    # Cut rasters into tiles of a given geographic size.
+    tile_size = 300
     sentinel_tiles_folder = "sentinel_tiles" 
     drone_tiles_folder = "drone_tiles"
+    create_tiles(sentinel_clipped, sentinel_tiles_folder, tile_size_meters=tile_size)
+    create_tiles(drone_clipped, drone_tiles_folder, tile_size_meters=tile_size)
 
-    create_tiles(sentinel_clipped, sentinel_tiles_folder, tile_size_meters=400)
-    create_tiles(drone_clipped, drone_tiles_folder, tile_size_meters=400)
-
-
+    # Plot side-by-side comparisons for all matching Sentinel-2 and drone tiles.
     plot_all_tiles(drone_tiles_folder, sentinel_tiles_folder, "output_plots")
     plot_all_tiles_grid(drone_tiles_folder, sentinel_tiles_folder)
 
-    plot_reconstructed_image(tile_folder=sentinel_tiles_folder, tile_size_meters=200, pixel_size=10, output_path="sentinel_reconstructed.png")
-    plot_reconstructed_image(tile_folder=drone_tiles_folder, tile_size_meters=200, pixel_size=1, output_path="drone_reconstructed.png")
+    # Reconstruct and plot all tiles of an image by stitching them back together.
+    plot_reconstructed_image(tile_folder=sentinel_tiles_folder, tile_size_meters=tile_size, pixel_size=target_resolution_drone, output_path="sentinel_reconstructed.png")
+    plot_reconstructed_image(tile_folder=drone_tiles_folder, tile_size_meters=tile_size, pixel_size=target_resolution_s2, output_path="drone_reconstructed.png")
 
 
 
