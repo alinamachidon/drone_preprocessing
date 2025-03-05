@@ -54,9 +54,9 @@ sentinel_tiles/
 
 drone_tiles/
 
-Comparison Plots: output_plots/
+Comparison plots: output_plots/
 
-Reconstructed Images:
+Reconstructed images:
 
 sentinel_reconstructed.png
 
