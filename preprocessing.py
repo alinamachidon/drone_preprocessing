@@ -51,51 +51,6 @@ def reproject_raster(input_raster, reference_raster, output_raster):
     print(f"Reprojected raster saved to {output_raster}")
 
 
-
-def rescale_drone_image(input_path, output_path, target_resolution=1):
-    """Rescales the drone image from a high resolution (e.g., 2cm/pixel) to a lower resolution (e.g., 1m/pixel)."""
-    
-    with rasterio.open(input_path) as src:
-
-        transform, width, height = calculate_default_transform(
-            src.crs, "EPSG:3857", src.width, src.height, *src.bounds
-        ) # Web Mercator (Meters)
-        #print(f"Estimated resolution in meters: {transform.a}")
-        
-
-        # Compute scaling factor 
-        scale_factor = target_resolution / transform.a 
-        
-        # Compute new dimensions
-        new_width = int(src.width / scale_factor)
-        new_height = int(src.height / scale_factor)
-        
-        # print(f"Original resolution: {src.res[0]}m/pixel")
-        # print(f"Target resolution: {target_resolution}m/pixel")
-        # print(f"New image size: {new_width} x {new_height}")
-
-        # Compute new transform
-        new_transform = src.transform * Affine.scale(scale_factor, scale_factor)
-
-        # Update profile for output
-        profile = src.profile
-        profile.update({
-            "width": new_width,
-            "height": new_height,
-            "transform": new_transform,
-            "driver": "GTiff"  # Ensure correct output format
-        })
-
-        # Resample and write output
-        with rasterio.open(output_path, "w", **profile) as dst:
-            for i in range(1, src.count + 1):  # Loop through bands
-                data = src.read(i, out_shape=(new_height, new_width), resampling=Resampling.bilinear)
-                dst.write(data, i)
-
-        print(f"Rescaled image saved to {output_path}")
-
-
-
 def resample_raster(input_raster, output_raster, target_resolution, resampling_method=Resampling.bilinear):
     """
     Resamples raster to a target resolution (e.g., 10m/pixel).
