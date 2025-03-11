@@ -1,6 +1,8 @@
 import rasterio
 from rasterio.mask import mask
 from rasterio.warp import calculate_default_transform, reproject, Resampling
+from rasterio.transform import Affine
+from rasterio.warp import calculate_default_transform
 from rasterio.enums import Resampling
 from rasterio.vrt import WarpedVRT
 import numpy as np
@@ -49,68 +51,105 @@ def reproject_raster(input_raster, reference_raster, output_raster):
     print(f"Reprojected raster saved to {output_raster}")
 
 
+
 def rescale_drone_image(input_path, output_path, target_resolution=1):
-    """Rescales the drone image to a lower resolution to reduce processing time."""
+    """Rescales the drone image from a high resolution (e.g., 2cm/pixel) to a lower resolution (e.g., 1m/pixel)."""
+    
     with rasterio.open(input_path) as src:
-        scale_factor = max(1, src.res[0] / target_resolution)
-        new_width = max(1, int(src.width / scale_factor))
-        new_height = max(1, int(src.height / scale_factor))
-
-        #print(f"New dimensions: {new_width} x {new_height}")
-
-        transform = src.transform * src.transform.scale(
-            (new_width / src.width), (new_height / src.height)
-        )
-
-        profile = src.profile
-        profile.update({
-            "width": int(new_width),
-            "height": int(new_height),
-            "transform": transform
-        })
-
-        with rasterio.open(output_path, "w", **profile) as dst:
-            for i in range(1, src.count + 1):  # Loop through bands
-                data = src.read(i, out_shape=(new_height, new_width))
-                dst.write(data, i)
-        
-        print(f"Rescaled drone image {input_path} saved to {output_path}")
-
-
-def resample_sentinel2(input_raster, output_raster, target_resolution):
-    """
-    Resamples Sentinel-2 image.
-    """
-    with rasterio.open(input_raster) as src: 
-        target_crs = src.crs
 
         transform, width, height = calculate_default_transform(
-            src.crs, target_crs, src.width, src.height, *src.bounds, resolution=target_resolution
-        )
+            src.crs, "EPSG:3857", src.width, src.height, *src.bounds
+        ) # Web Mercator (Meters)
+        #print(f"Estimated resolution in meters: {transform.a}")
+        
 
-        profile = src.profile.copy()
+        # Compute scaling factor 
+        scale_factor = target_resolution / transform.a 
+        
+        # Compute new dimensions
+        new_width = int(src.width / scale_factor)
+        new_height = int(src.height / scale_factor)
+        
+        # print(f"Original resolution: {src.res[0]}m/pixel")
+        # print(f"Target resolution: {target_resolution}m/pixel")
+        # print(f"New image size: {new_width} x {new_height}")
+
+        # Compute new transform
+        new_transform = src.transform * Affine.scale(scale_factor, scale_factor)
+
+        # Update profile for output
+        profile = src.profile
         profile.update({
-            "crs": target_crs,
-            "transform": transform,
-            "width": width,
-            "height": height
+            "width": new_width,
+            "height": new_height,
+            "transform": new_transform,
+            "driver": "GTiff"  # Ensure correct output format
         })
 
+        # Resample and write output
+        with rasterio.open(output_path, "w", **profile) as dst:
+            for i in range(1, src.count + 1):  # Loop through bands
+                data = src.read(i, out_shape=(new_height, new_width), resampling=Resampling.bilinear)
+                dst.write(data, i)
+
+        print(f"Rescaled image saved to {output_path}")
+
+
+
+def resample_raster(input_raster, output_raster, target_resolution, resampling_method=Resampling.bilinear):
+    """
+    Resamples raster to a target resolution (e.g., 10m/pixel).
+    
+    Parameters:
+        input_raster (str): Path to the input raster.
+        output_raster (str): Path to save the resampled output raster.
+        target_resolution (float): Target resolution in meters (e.g., 10 for Sentinel-2 L2A).
+        resampling_method (rasterio.enums.Resampling): Resampling method (default: bilinear).
+    """
+    with rasterio.open(input_raster) as src:
+        original_crs = src.crs
+        #print(f"Original CRS: {original_crs}")
+
+        # Step 1: Detect if CRS is in degrees (EPSG:4326) and convert to meters
+        if original_crs.to_string().startswith("EPSG:4326"):
+            print("Detected EPSG:4326 (degrees), converting to a metric projection (UTM)...")
+            
+            # Convert to an appropriate UTM zone (automatic selection)
+            dst_crs = "EPSG:3857"  # Web Mercator (Meters)
+        else:
+            dst_crs = original_crs  # Already in meters
+
+        # Step 2: Calculate new transform and size
+        transform, width, height = calculate_default_transform(
+            src.crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
+        )
+
+        # Step 3: Update profile
+        profile = src.profile.copy()
+        profile.update({
+            "crs": dst_crs,  # Update to projected CRS
+            "transform": transform,
+            "width": width,
+            "height": height,
+            "dtype": src.dtypes[0],  # Preserve dtype
+            "nodata": src.nodata,  # Keep nodata values
+            "compress": "lzw"  # Enable compression
+        })
+
+        # Step 4: Resample with the correct resolution
         with rasterio.open(output_raster, "w", **profile) as dst:
-            for i in range(1, src.count + 1): 
+            for i in range(1, src.count + 1):  # Loop through bands
                 reproject(
                     source=rasterio.band(src, i),
                     destination=rasterio.band(dst, i),
                     src_transform=src.transform,
                     src_crs=src.crs,
                     dst_transform=transform,
-                    dst_crs=target_crs,
-                    resampling=Resampling.bilinear  
+                    dst_crs=dst_crs,
+                    resampling=resampling_method  
                 )
 
-    print(f"Resampled {input_raster} to {target_resolution}m/pixel saved to {output_raster}")
-
-
+        print(f"Resampled {input_raster} to {target_resolution}m/pixel and saved to {output_raster}")
 
 def clip_raster_and_save(raster_path, output_tif_path, reference_raster):
     """
@@ -163,13 +202,16 @@ def create_tiles(raster_path, output_folder, tile_size_meters):
 
     with rasterio.open(raster_path) as src:
         transform = src.transform
+        
+        #print(f"Resolution in meters: {transform.a}, {-transform.e}")
+        
         pixel_size_x, pixel_size_y = transform.a, -transform.e  # Get pixel size
         tile_size_x = int(tile_size_meters / pixel_size_x)
         tile_size_y = int(tile_size_meters / pixel_size_y)
 
         num_tiles_x = src.width // tile_size_x
         num_tiles_y = src.height // tile_size_y
-
+        
         for i in range(num_tiles_x):
             for j in range(num_tiles_y):
                 left = transform.c + (i * tile_size_x * pixel_size_x)
@@ -380,21 +422,20 @@ def main():
     # Paths to input raster files
     sentinel_raster = "2024-07-31_Sentinel-2_L2A.tif"
     drone_raster = "../magicbathy/MagicBathyNet/20240731_Volarje_RX1_orthomosaic_2cmGSD.tif"
+    print_raster_info(drone_raster)
+
     target_drone_res = 1
     target_s2_res = 10
 
     drone_rescaled = "rescaled_drone_1m.tif"
-    rescale_drone_image(drone_raster, drone_rescaled, target_drone_res)
-    print_raster_info(drone_rescaled)
-
+    resample_raster(drone_raster, drone_rescaled, target_drone_res)
+    
     sentinel_resampled = "rescaled_sentinel_10m.tif"
-    resample_sentinel2(sentinel_raster, sentinel_resampled, target_s2_res)
-    print_raster_info(sentinel_resampled)
-
+    resample_raster(sentinel_raster, sentinel_resampled, target_s2_res)
+   
     drone_reprojected = "reprojected_drone.tif"
     reproject_raster(drone_rescaled, sentinel_resampled, drone_reprojected)
-    print_raster_info(drone_reprojected)
-    
+   
     sentinel_clipped = "soca_sentinel_clipped.tif"
     drone_clipped = "soca_drone_clipped.tif"
 
