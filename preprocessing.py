@@ -298,6 +298,68 @@ def upscale_image(image, target_size):
     return cv2.resize(image, target_size, interpolation=cv2.INTER_NEAREST)  # Nearest-neighbor keeps original pixels
 
 
+
+def plot_all_tiles_with_labels(drone_folder, sentinel_folder, labels_folder, output_folder):
+    """
+    Plots side-by-side comparisons for all matching Sentinel-2, Drone, and Label tiles.
+
+    Args:
+        drone_folder (str): Path to the folder containing drone tiles.
+        sentinel_folder (str): Path to the folder containing sentinel tiles.
+        labels_folder (str): Path to the folder containing label tiles.
+        output_folder (str): Path to save the comparison PNGs.
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    drone_tiles = sorted(glob.glob(os.path.join(drone_folder, "*.tif")))
+    sentinel_tiles = sorted(glob.glob(os.path.join(sentinel_folder, "*.tif")))
+    label_tiles = sorted(glob.glob(os.path.join(labels_folder, "*.tif")))
+
+    for drone_path, sentinel_path, label_path in zip(drone_tiles, sentinel_tiles, label_tiles):
+        tile_name = os.path.basename(drone_path).replace(".tif", "")
+
+        with rasterio.open(sentinel_path) as src:
+            sentinel_data = src.read(sentinel_bands)
+            sentinel_data = np.moveaxis(sentinel_data, 0, -1)  # Convert to (H, W, C)
+            sentinel_data = normalize_image(sentinel_data)
+
+        with rasterio.open(drone_path) as src:
+            drone_data = src.read([1, 2, 3])  # Use first 3 bands as RGB
+            drone_data = np.moveaxis(drone_data, 0, -1)  # Convert to (H, W, C)
+            drone_data = normalize_image(drone_data)
+
+        with rasterio.open(label_path) as src:
+            labels_data = src.read(1)  # Assuming single-band label raster
+            labels_data = normalize_image(labels_data)  # Normalize for visualization
+
+        # Upscale Sentinel-2 Image and Labels to match Drone size
+        upscaled_sentinel = upscale_image(sentinel_data, (drone_data.shape[1], drone_data.shape[0]))
+        upscaled_labels = upscale_image(labels_data, (drone_data.shape[1], drone_data.shape[0]))
+
+        # Plot side-by-side
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        
+        axes[0].imshow(upscaled_sentinel)
+        axes[0].set_title(f"Sentinel-2: {tile_name}")
+        axes[0].axis("off")
+
+        axes[1].imshow(drone_data)
+        axes[1].set_title(f"Drone: {tile_name}")
+        axes[1].axis("off")
+
+        axes[2].imshow(upscaled_labels, cmap="gray")
+        axes[2].set_title(f"Labels: {tile_name}")
+        axes[2].axis("off")
+
+        plt.tight_layout()
+
+        output_png_path = os.path.join(output_folder, f"{tile_name}.png")
+        plt.savefig(output_png_path, dpi=300)
+        plt.close()
+        
+        print(f"Saved comparison: {output_png_path}")
+
+
 def plot_all_tiles(drone_folder, sentinel_folder, output_folder):
     """
     Plots side-by-side comparisons for all matching Sentinel-2 and Drone tiles.
@@ -521,16 +583,28 @@ def main():
 
     clip_raster_and_save(sentinel_resampled, sentinel_clipped, drone_rescaled)
     print_raster_info(sentinel_clipped)
+
+    labels = "rasterized_labels.tif"
+    print_raster_info(sentinel_clipped)
+
+    labels_clipped = "labels_clipped.tif"
+    clip_raster_and_save(labels, labels_clipped, drone_rescaled)
+    print_raster_info(labels_clipped)
+
+
    
     sentinel_tiles_folder = "sentinel_tiles" # output folder for generated sentinel image tiles
     drone_tiles_folder = "drone_tiles" # output folder for generated drone image tiles
+    labels_folder = "labels_tiles" # output folder for generated labels image tiles
 
     # target tile size (in meters)
     tile_size = 400
     create_tiles(sentinel_clipped, sentinel_tiles_folder, tile_size)
     create_tiles(drone_rescaled, drone_tiles_folder, tile_size)
+    create_tiles(labels_clipped, labels_folder, tile_size)
 
     plot_all_tiles(drone_tiles_folder, sentinel_tiles_folder, "output_plots")
+    plot_all_tiles_with_labels(drone_tiles_folder, sentinel_tiles_folder, labels_folder, "output_plots")
     plot_all_tiles_grid(drone_tiles_folder, sentinel_tiles_folder)
 
     plot_reconstructed_image(tile_folder=sentinel_tiles_folder, tile_size_meters=tile_size, pixel_size=target_s2_res, output_path="sentinel_reconstructed.png")
