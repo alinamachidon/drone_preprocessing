@@ -129,7 +129,8 @@ def main():
         # Stack all cropped rasters (3D array)
         raster_stack = [r.astype(np.float32) for r in cropped_rasters.values()]
         stack = np.stack(raster_stack, axis=0)
-        stack_clean = np.where(np.isclose(stack, NODATA_VALUE, atol=10), np.nan, stack)
+        #stack_clean = np.where(np.isclose(stack, NODATA_VALUE, atol=10), np.nan, stack)
+        stack_clean = np.where(stack == NODATA_VALUE, np.nan, stack)
         valid_mask = np.sum(np.isfinite(stack_clean), axis=0) >= 2
 
         # === Compute Per-Pixel MAE ===
@@ -159,7 +160,7 @@ def main():
         plt.close()
 
         # === Detect and Save Unreliable Areas ===
-        threshold = 0.5  # You could also compute this dynamically
+        threshold = 0.5  #could also be computed dynamically
         unreliable_mask = std_dev > threshold
 
         plt.figure(figsize=(8, 6))
@@ -172,7 +173,7 @@ def main():
 
         # Save unreliable mask as GeoTIFF
         mask_profile = ref_profile.copy()
-        mask_profile.update(dtype="uint8", count=1)
+        #mask_profile.update(dtype="uint8", count=1)
         with rasterio.open(os.path.join(output_dir, f"{location}_unreliable_mask.tif"), "w", **mask_profile) as dst:
             dst.write(unreliable_mask.astype("uint8"), 1)
 
