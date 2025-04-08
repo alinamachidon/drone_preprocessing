@@ -194,49 +194,104 @@ def clip_raster_and_save(raster_path, output_tif_path, reference_raster):
     print(f"Clipped raster saved to {output_tif_path}")
 
 
-def pad_raster_to_tile_size(raster_path, padded_raster_path, tile_size_meters):
+# def pad_raster_to_tile_size(raster_path, padded_raster_path, tile_size_meters):
+#     """
+#     Pads the raster so its dimensions are fully divisible by the tile size.
+#     Padding is added to the right and bottom to maintain geographic alignment.
+#     """
+#     with rasterio.open(raster_path) as src:
+#         transform = src.transform
+#         pixel_size_x, pixel_size_y = transform.a, -transform.e  # Get pixel size
+#         tile_size_x = int(tile_size_meters / pixel_size_x)
+#         tile_size_y = int(tile_size_meters / pixel_size_y)
+
+#         # Compute the required padding
+#         pad_x = (tile_size_x - (src.width % tile_size_x)) % tile_size_x
+#         pad_y = (tile_size_y - (src.height % tile_size_y)) % tile_size_y
+
+#         new_width = src.width + pad_x
+#         new_height = src.height + pad_y
+
+#         # Handle missing NoData value
+#         nodata_value = src.nodata if src.nodata is not None else 0  
+
+#         # Create new padded dataset
+#         profile = src.profile.copy()
+#         profile.update({
+#             "width": new_width,
+#             "height": new_height,
+#             "nodata": nodata_value  # Ensure NoData is set
+#         })
+
+#         with rasterio.open(padded_raster_path, "w", **profile) as dst:
+#             # Read original data
+#             data = src.read()
+
+#             # Create padded data array filled with NoData value
+#             padded_data = np.full((src.count, new_height, new_width), nodata_value, dtype=src.dtypes[0])
+
+#             # Copy original data into the top-left part of the new array
+#             padded_data[:, :src.height, :src.width] = data
+
+#             # Write padded raster
+#             dst.write(padded_data)
+
+#     return padded_raster_path
+
+
+def pad_raster_to_tile_size(raster_path, padded_raster_path, tile_size_meters, pad_value=None):
     """
-    Pads the raster so its dimensions are fully divisible by the tile size.
-    Padding is added to the right and bottom to maintain geographic alignment.
+    Pads the raster so its dimensions are divisible by the tile size.
+    Padding is added to the right and bottom. The padding value can be specified or inferred.
     """
     with rasterio.open(raster_path) as src:
         transform = src.transform
-        pixel_size_x, pixel_size_y = transform.a, -transform.e  # Get pixel size
+        pixel_size_x, pixel_size_y = transform.a, -transform.e
         tile_size_x = int(tile_size_meters / pixel_size_x)
         tile_size_y = int(tile_size_meters / pixel_size_y)
 
-        # Compute the required padding
         pad_x = (tile_size_x - (src.width % tile_size_x)) % tile_size_x
         pad_y = (tile_size_y - (src.height % tile_size_y)) % tile_size_y
 
         new_width = src.width + pad_x
         new_height = src.height + pad_y
 
-        # Handle missing NoData value
-        nodata_value = src.nodata if src.nodata is not None else 0  
+        # Read original data
+        data = src.read()
+        dtype = src.dtypes[0]
 
-        # Create new padded dataset
+        print(raster_path," ",dtype)
+        # Choose padding value
+        if pad_value is None:
+            if dtype == 'uint8':
+                pad_value = 255
+            elif dtype == 'uint16':
+                pad_value = 10000
+            elif 'float' in dtype:
+                pad_value = 1.0
+            else:
+                pad_value = 0  # fallback
+
+        # Create padded array
+        padded_data = np.full((src.count, new_height, new_width), pad_value, dtype=dtype)
+        padded_data[:, :src.height, :src.width] = data
+
+        # Update profile
         profile = src.profile.copy()
         profile.update({
             "width": new_width,
             "height": new_height,
-            "nodata": nodata_value  # Ensure NoData is set
+            "nodata": None,  # You can also set to pad_value if needed
+            "dtype": dtype
         })
 
         with rasterio.open(padded_raster_path, "w", **profile) as dst:
-            # Read original data
-            data = src.read()
-
-            # Create padded data array filled with NoData value
-            padded_data = np.full((src.count, new_height, new_width), nodata_value, dtype=src.dtypes[0])
-
-            # Copy original data into the top-left part of the new array
-            padded_data[:, :src.height, :src.width] = data
-
-            # Write padded raster
             dst.write(padded_data)
 
+    print("Bottom-right pixel values (should be padding):", padded_data[:, -1, -1])
+
     return padded_raster_path
+
 
 
 def create_tiles(raster_path, output_folder, tile_size_meters):
@@ -288,7 +343,7 @@ def normalize_image(image):
     max_val = np.percentile(image, 98)
     # Avoid division by zero if max_val == min_val
     if max_val - min_val == 0:
-        return np.zeros_like(image)  # or return image, depending on your preference
+        return np.zeros_like(image)  # or return image
     
     image = np.clip((image - min_val) / (max_val - min_val), 0, 1)
     return image
@@ -355,7 +410,7 @@ def plot_all_tiles_with_labels(drone_folder, sentinel_folder, labels_folder, out
 
         output_png_path = os.path.join(output_folder, f"{tile_name}.png")
         plt.savefig(output_png_path, dpi=300)
-        plt.close()
+        plt.close(fig)
         
         print(f"Saved comparison: {output_png_path}")
 
@@ -406,7 +461,7 @@ def plot_all_tiles(drone_folder, sentinel_folder, output_folder):
 
         output_png_path = os.path.join(output_folder, f"{tile_name}.png")
         plt.savefig(output_png_path, dpi=300)
-        plt.close()
+        plt.close(fig)
         
         print(f"Saved comparison: {output_png_path}")
 
@@ -492,6 +547,7 @@ def plot_all_tiles_grid(drone_folder, sentinel_folder):
 
     plt.tight_layout()
     plt.savefig("all_tiles_plot.png")
+    plt.close(fig)
 
 
 def plot_reconstructed_image(tile_folder, tile_size_meters, pixel_size, output_path=None):
@@ -550,10 +606,10 @@ def plot_reconstructed_image(tile_folder, tile_size_meters, pixel_size, output_p
     plt.title(f"Reconstructed Image ({num_tiles_x}x{num_tiles_y} tiles)")
     plt.axis("off")
 
-    # Save the reconstructed image if an output path is given
-    if output_path:
-        plt.savefig(output_path, dpi=300)
-        print(f"Saved reconstructed image to {output_path}")
+    # Save the reconstructed image 
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    print(f"Saved reconstructed image to {output_path}")
 
 def print_raster_info(raster_name):
     with rasterio.open(raster_name) as src:
@@ -562,11 +618,110 @@ def print_raster_info(raster_name):
         print(f"Image Size: {src.width} x {src.height}")
 
 
+def plot_drone_and_mask(drone_tile_path, mask_tile_path, output_path):
+    """
+    Plots the drone tile and its validity mask side by side.
+    
+    Args:
+        drone_tile_path (str): Path to the drone image tile (GeoTIFF).
+        mask_tile_path (str): Path to the corresponding validity mask (GeoTIFF).
+        output_path (str, optional): If given, saves the plot to this path.
+    """
+    with rasterio.open(drone_tile_path) as drone_src:
+        drone_data = drone_src.read([1, 2, 3])
+        drone_data = np.moveaxis(drone_data, 0, -1)  # (H, W, C)
+        drone_data = normalize_image(drone_data)
+
+    with rasterio.open(mask_tile_path) as mask_src:
+        mask_data = mask_src.read(1)  # single-band mask
+
+    # Plot side by side
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    
+    axes[0].imshow(drone_data)
+    axes[0].set_title("Drone Tile")
+    axes[0].axis("off")
+
+    axes[1].imshow(mask_data, cmap="gray")
+    axes[1].set_title("Validity Mask (1 = valid, 0 = white)")
+    axes[1].axis("off")
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close(fig)
+    print(f"Saved comparison plot to {output_path}")
+  
+
+
+def generate_validity_masks(drone_tiles_folder, output_mask_folder):
+    """
+    Generates validity masks for drone tiles by detecting pure white regions (R=G=B=255).
+    
+    Args:
+        drone_tiles_folder (str): Path to folder with drone image tiles.
+        output_mask_folder (str): Path to save binary validity masks.
+    """
+    os.makedirs(output_mask_folder, exist_ok=True)
+    drone_tiles = sorted(glob.glob(os.path.join(drone_tiles_folder, "*.tif")))
+
+    for tile_path in drone_tiles:
+        tile_name = os.path.basename(tile_path)
+        with rasterio.open(tile_path) as src:
+            rgb = src.read([1, 2, 3])  # Shape: (3, H, W)
+            profile = src.profile
+
+        # Step 1: Identify strict white pixels (seed points)
+        strict_white = np.all(rgb == 255, axis=0)  # shape: (H, W)
+
+        # Step 2: Identify "almost white" pixels — candidates for invalid regions
+        almost_white_threshold = 200
+        almost_white = np.all(rgb >= almost_white_threshold, axis=0).astype(np.uint8)
+
+        # Step 3: Label connected components in the almost-white mask
+        num_labels, labels = cv2.connectedComponents(almost_white, connectivity=8)
+
+        # Step 4: Create the final invalid mask
+        final_invalid_mask = np.zeros_like(strict_white, dtype=np.uint8)
+
+        for label in range(1, num_labels):  # Skip background label 0
+            region = labels == label
+            if np.any(strict_white[region]):  # If this region contains any strict white pixel
+                final_invalid_mask[region] = 1  # Include the full region as invalid
+
+
+        # Step 5: Detect black pixels (potential padding)
+        black_mask = np.all(rgb == 0, axis=0)  # shape: (H, W)
+        final_invalid_mask[black_mask] = 1
+
+        # Step 6: Invert the mask to get the validity mask
+        validity_mask = (1 - final_invalid_mask).astype(np.uint8)
+
+        # Save as single-band raster
+        profile.update({
+            "count": 1,
+            "dtype": "uint8"
+        })
+
+        mask_path = os.path.join(output_mask_folder, tile_name)
+        with rasterio.open(mask_path, "w", **profile) as dst:
+            dst.write(validity_mask[np.newaxis, :, :])  # Add band dim
+
+        print(f"Saved validity mask: {mask_path}")
+
+        drone_tile_path = os.path.join(drone_tiles_folder, tile_name)
+        print(drone_tile_path)
+
+        mask_vs_drone_path = os.path.join(output_mask_folder, f"mask_vs_drone_path_{tile_name}.png")
+        plot_drone_and_mask(drone_tile_path, mask_path, mask_vs_drone_path)
+
+
 def main():
+     # Set this flag to 1 if label data is available, 0 otherwise
+    labels_available = 1  # <-- change to 0 if labels are not available
+
     # Paths to input raster files
     sentinel_raster = "2024-07-31_Sentinel-2_L2A.tif"
     drone_raster = "../magicbathy/MagicBathyNet/20240731_Volarje_RX1_orthomosaic_2cmGSD.tif"
-    print_raster_info(drone_raster)
 
     # Target resolution for the drone image (in meters)
     target_drone_res = 1
@@ -575,6 +730,7 @@ def main():
 
     drone_rescaled = "rescaled_drone_1m.tif"
     resample_raster(drone_raster, drone_rescaled, target_drone_res)
+    print_raster_info(drone_raster)
     
     sentinel_resampled = "rescaled_sentinel_10m.tif"
     resample_raster(sentinel_raster, sentinel_resampled, target_s2_res)
@@ -591,8 +747,6 @@ def main():
     clip_raster_and_save(labels, labels_clipped, drone_rescaled)
     print_raster_info(labels_clipped)
 
-
-   
     sentinel_tiles_folder = "sentinel_tiles" # output folder for generated sentinel image tiles
     drone_tiles_folder = "drone_tiles" # output folder for generated drone image tiles
     labels_folder = "labels_tiles" # output folder for generated labels image tiles
@@ -601,10 +755,25 @@ def main():
     tile_size = 400
     create_tiles(sentinel_clipped, sentinel_tiles_folder, tile_size)
     create_tiles(drone_rescaled, drone_tiles_folder, tile_size)
-    create_tiles(labels_clipped, labels_folder, tile_size)
+
+    if labels_available:
+        labels = "rasterized_labels.tif"
+        labels_clipped = "labels_clipped.tif"
+
+        print_raster_info(labels)
+        clip_raster_and_save(labels, labels_clipped, drone_rescaled)
+        print_raster_info(labels_clipped)
+
+        create_tiles(labels_clipped, labels_folder, tile_size)
+        plot_all_tiles_with_labels(drone_tiles_folder, sentinel_tiles_folder, labels_folder, "output_plots")
+        
+    else:
+        print("Labels not available. Skipping label tile creation and plots.")
+
+    validity_mask_folder = "validity_masks"
+    generate_validity_masks(drone_tiles_folder, validity_mask_folder)
 
     plot_all_tiles(drone_tiles_folder, sentinel_tiles_folder, "output_plots")
-    plot_all_tiles_with_labels(drone_tiles_folder, sentinel_tiles_folder, labels_folder, "output_plots")
     plot_all_tiles_grid(drone_tiles_folder, sentinel_tiles_folder)
 
     plot_reconstructed_image(tile_folder=sentinel_tiles_folder, tile_size_meters=tile_size, pixel_size=target_s2_res, output_path="sentinel_reconstructed.png")
